@@ -61,14 +61,34 @@ FastAPI app, managed with uv. Serves the API under `/api` and the static fronten
 - `static/` - currently a placeholder page for that standalone case. The Docker image
   always overwrites this directory with the Next.js static export at build time (see the
   root `Dockerfile`).
-- `app/ai.py` - `ask(messages)` calls the OpenAI API (`openai` Python SDK, currently
-  v3.x - its top-level API differs a fair amount from the v1.x line most docs/training data
-  describe; check the installed version's actual signatures before assuming an example is
-  current) via `client.chat.completions.create`. `get_client()` reads `OPENAI_API_KEY` from
-  the environment and raises a clear `RuntimeError` if it's missing - deliberately not done
-  at import time, so importing this module (which every test run does transitively) never
-  fails just because a key isn't configured. `get_model()` reads `OPENAI_MODEL`, defaulting
-  to `gpt-5.6-luna` (confirmed working via the live test below).
+- `app/ai.py` - `get_client()`/`get_model()` read `OPENAI_API_KEY`/`OPENAI_MODEL` (default
+  `gpt-5.6-luna`) from the environment, only when actually called - never at import time, so
+  importing this module (which every test run does transitively) never fails just because a
+  key isn't configured. `ask(messages)` is a plain text call
+  (`client.chat.completions.create`), used by the Part 8 live smoke test. `ask_structured(
+  messages, response_model)` is the one `app/chat.py` uses -
+  `client.chat.completions.parse(..., response_format=response_model)`, returning an
+  already-validated instance of `response_model` (`message.parsed`); raises if the model
+  refused or returned nothing parseable. The `openai` Python SDK here is v3.x, a fair way
+  from the v1.x line most existing docs/training data describes - its top-level client shape
+  differs enough that its actual installed API (`dir(...)`, `inspect.signature(...)`) is
+  worth checking directly before assuming an example is still current.
+- `app/chat.py` - `POST /api/chat`. Builds a system prompt from the rules (the five fixed
+  column ids, "only titles change", "every card in exactly one column") plus the live
+  current board (re-read from `boards` on every call, not cached, since a direct UI edit
+  since the last chat turn must be reflected), appends the stored conversation history plus
+  the new message, and calls `ask_structured` with `ChatReply` (`reply: str`,
+  `board: AIBoardData | None`). **`AIBoardData` is not `BoardData`**: OpenAI's structured
+  outputs (strict JSON schema) require every object to have a fixed set of properties, so
+  `BoardData.cards` (a `dict[str, Card]` - an open-ended map) can't be used as-is in a
+  `response_format` schema - confirmed by trying it and reading the resulting
+  `400 invalid_request_error` before designing around it. `AIBoardData.cards` is a `list`
+  instead (each `AICard` already carries its own `id`), and `_ai_board_to_board_data()`
+  converts that list into the dict-keyed shape (rejecting a duplicate id, which the dict
+  conversion would otherwise silently drop) and constructs a real `BoardData` - which runs
+  the exact same invariant validation as `PUT /api/board`, since it's the exact same model.
+  An invalid or unset board leaves `boards` untouched; either way the reply still reaches the
+  user. Conversation history: see `docs/DATABASE.md`'s `chat_history` section.
 - `tests/` - pytest, run with `uv run pytest`. `conftest.py`'s `db_path` fixture points
   `DATABASE_PATH` at a fresh `tmp_path` file per test (via `monkeypatch`); its `client`
   fixture builds on that to give each test an isolated, freshly-seeded database - no test
@@ -101,6 +121,9 @@ automatically on first use; deleting the file and restarting recreates it.
 - `GET /api/board` - the signed-in user's board, 401 without a session.
 - `PUT /api/board` - replaces the signed-in user's board; 422 if it fails the
   `BoardData` invariants, 401 without a session.
+- `POST /api/chat` - `{message}` -> `{reply, board?}`. `board` is present only when the AI
+  proposed (and it passed validation as) a change; otherwise `null` and the stored board is
+  untouched. 401 without a session.
 
 ## Commands
 

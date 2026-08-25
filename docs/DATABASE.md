@@ -1,7 +1,7 @@
 # Database
 
-SQLite. Two tables: `users` and `boards`, one board per user, the board's content stored as
-a single JSON document rather than normalized into rows.
+SQLite. Three tables: `users`, `boards`, and `chat_history` - one board and one chat
+history per user, each stored as a single JSON document rather than normalized into rows.
 
 ## Schema
 
@@ -17,6 +17,13 @@ CREATE TABLE boards (
     id         INTEGER PRIMARY KEY,
     user_id    INTEGER NOT NULL UNIQUE REFERENCES users(id),
     data       TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE chat_history (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL UNIQUE REFERENCES users(id),
+    messages   TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 ```
@@ -56,13 +63,26 @@ prompt - no translation layer anywhere in the stack:
 }
 ```
 
+## The chat history document (`chat_history.messages`)
+
+A JSON array of plain `{"role": "user" | "assistant", "content": "..."}` objects - the
+conversation turns only, not the board (the current board is re-read from `boards` and
+re-injected into the system prompt on every call, since it may have changed via direct UI
+edits between chat turns; storing a stale copy of it in history would be actively wrong).
+Capped at `MAX_HISTORY_MESSAGES` (20, i.e. 10 turns) in `app/chat.py`, oldest dropped first,
+so the prompt sent to the model can't grow without bound. No row exists until the first
+chat message - `chat_history` is not seeded at startup, `load_history` just returns `[]` for
+a missing row and the first `save_history` call creates it (`INSERT ... ON CONFLICT DO
+UPDATE`, so every later call is a plain upsert).
+
 ## Seeding
 
 On startup, if the `users` table is empty: insert the `user` / `password` account, then
-insert one board for it whose `data` is the current `frontend/src/lib/kanban.ts`
-`initialData` (five columns, eight cards, reproduced above). Startup is idempotent - it
-only seeds when the table is empty, so restarting the container never duplicates the user
-or resets an already-modified board.
+insert one board for it whose `data` is `backend/app/board.py`'s `INITIAL_BOARD` (five
+columns, eight cards, reproduced above - this is the only copy of the seed data; the
+frontend no longer ships its own). Startup is idempotent - it only seeds when the table is
+empty, so restarting the container never duplicates the user or resets an already-modified
+board.
 
 The five column ids (`col-backlog`, `col-discovery`, `col-progress`, `col-review`,
 `col-done`) are fixed constants, identical for every user - not generated per-user. That
@@ -73,7 +93,8 @@ name the five column ids directly instead of having to look them up first.
 ## Invariants the backend enforces
 
 Checked in Part 6 before any board write is accepted (login, hand-written API calls, and
-later the AI's proposed updates in Part 9 all go through the same check):
+the AI's proposed updates from Part 9 all go through the same check, via the same
+`BoardData` model):
 
 - Exactly the five fixed columns, present in a fixed set of ids, each renameable but never
   added, removed, or re-identified

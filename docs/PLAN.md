@@ -344,26 +344,36 @@ rather than assumed from memory before writing `ai.py` against it.
 **Goal** - the AI sees the board and the conversation, and answers with an optional board
 update.
 
-- [ ] `POST /api/chat` taking `{message}` and returning `{reply, board?}`
-- [ ] Conversation history stored per user; the simplest option that survives a reload,
-      decided when the route is built and recorded in `docs/DATABASE.md` if it needs a table
-- [ ] Prompt: a system message with the rules (five fixed columns, ids stable, never invent
+- [x] `POST /api/chat` taking `{message}` and returning `{reply, board?}`
+- [x] Conversation history stored per user in a new `chat_history` table (one row per user,
+      messages as a JSON array - mirrors the `boards` table's shape) - recorded in
+      `docs/DATABASE.md`
+- [x] Prompt: a system message with the rules (five fixed columns, ids stable, never invent
       a column id) plus the current board JSON, then the history and the new message
-- [ ] Structured Outputs with a Pydantic response model: `reply: str` and
-      `board: BoardData | None`
-- [ ] A returned board goes through the same Part 6 validation before it is saved; on
-      failure the reply is still returned and the board is left untouched
-- [ ] Cap history length so the prompt cannot grow without bound
+- [x] Structured Outputs with a Pydantic response model: `reply: str` and a board field -
+      **not literally `BoardData | None`** as originally sketched, though: OpenAI's
+      structured outputs can't represent `BoardData.cards`'s `dict[str, Card]` (confirmed by
+      trying it - a 400 naming `cards` as the offending field), so the AI-facing schema
+      (`AIBoardData` in `app/chat.py`) uses `cards: list[AICard]` instead, converted to the
+      real dict-keyed `BoardData` before validation/saving
+- [x] A returned board goes through the same Part 6 validation before it is saved (literally
+      the same `BoardData` model, via that conversion step) - on failure the reply is still
+      returned and the board is left untouched
+- [x] Cap history length (`MAX_HISTORY_MESSAGES = 20`) so the prompt cannot grow without
+      bound
 
-**Tests** - pytest with the AI client mocked:
+**Tests** - pytest with the AI client mocked (`test_chat.py`, `ask_structured` monkeypatched
+to return a canned `ChatReply`):
 - a reply with no board leaves the stored board unchanged
 - a reply with a board persists it and returns it
-- a structurally invalid board from the model is rejected, the board is unchanged, and the
-  reply still reaches the user
-- history accumulates across turns and is truncated at the cap
+- a structurally invalid board from the model (wrong column set) is rejected, the board is
+  unchanged, and the reply still reaches the user
+- history accumulates across turns and is truncated at the cap (`MAX_HISTORY_MESSAGES`
+  patched down to 4 for a fast test)
 - the route returns 401 without a session
-- one live test, marked `live`: asking to move the first Backlog card to Done produces a
-  board where that card id sits in `col-done`
+- one live test (`test_chat_live.py`), marked `live`: asking to move the first Backlog card
+  to Done produces a board where that card id sits in `col-done` - passed against the real
+  API
 
 **Success criteria** - the board never enters an invalid state as a result of a model
 response, proven by the invalid-board test.

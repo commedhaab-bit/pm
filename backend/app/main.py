@@ -7,6 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth import router as auth_router
 from app.board_routes import router as board_router
+from app.chat import router as chat_router
 from app.static import mount_static
 
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
@@ -29,4 +30,5 @@ def health() -> dict[str, str]:
 app.include_router(api)
 app.include_router(auth_router)
 app.include_router(board_router)
+app.include_router(chat_router)
 mount_static(app)
