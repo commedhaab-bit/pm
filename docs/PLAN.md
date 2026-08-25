@@ -314,20 +314,28 @@ not on a single run - see `frontend/AGENTS.md` for the full detail on each):
 
 **Goal** - prove the OpenAI call works end to end before building anything on top of it.
 
-- [ ] `backend/app/ai.py` - client constructed from `OPENAI_API_KEY`, model `gpt-5.6-luna`,
-      both read from the environment with the model overridable
-- [ ] A single `ask(messages, ...)` helper; a missing key fails loudly at call time with a
-      clear message rather than at import
-- [ ] `backend/tests/test_ai_live.py` - marked `live`, deselected by default, sends "What is
+- [x] `backend/app/ai.py` - client constructed from `OPENAI_API_KEY`, model `gpt-5.6-luna`,
+      both read from the environment with the model overridable (`OPENAI_MODEL`)
+- [x] A single `ask(messages)` helper; a missing key fails loudly at call time (inside
+      `get_client()`) with a clear message rather than at import
+- [x] `backend/tests/test_ai_live.py` - marked `live`, deselected by default, sends "What is
       2+2?" and asserts the reply contains "4"
-- [ ] Document the live-test command in the README
+- [x] Document the live-test command in the README (already there since Part 2)
 
 **Tests**
-- `pytest -m live` - the 2+2 test passes against the real API
-- `pytest` - the default run skips live tests and passes with no key present
+- `pytest -m live` - the 2+2 test passes against the real API - confirmed: `gpt-5.6-luna` is
+  a real, working model
+- `pytest` - the default run skips live tests (18 passed, 1 deselected) and passes with no
+  key present; `app.ai` never touches `OPENAI_API_KEY` at import time, only inside `ask()`
 
 **Success criteria** - the live test passes, and the ordinary test suite never touches the
-network.
+network - both confirmed above.
+
+Also added the `openai` Python SDK as a runtime dependency. It resolved to v3.x, a
+noticeably different major version from what most existing documentation/training
+describes (v1.x) - its top-level client shape and available resources differ, so its
+actual installed API was checked directly (`dir(openai.OpenAI)`, `inspect.signature(...)`)
+rather than assumed from memory before writing `ai.py` against it.
 
 ---
 

@@ -6,9 +6,9 @@ FastAPI app, managed with uv. Serves the API under `/api` and the static fronten
 ## Layout
 
 - `pyproject.toml` / `uv.lock` - dependencies. `fastapi`, `uvicorn`, `itsdangerous` (required
-  by `SessionMiddleware`) and `python-dotenv` at runtime; `pytest` and `httpx2` (FastAPI's
-  `TestClient` needs an HTTPX-compatible transport) as a dev-only group, excluded from the
-  image via `uv sync --no-dev`.
+  by `SessionMiddleware`), `python-dotenv`, and `openai` at runtime; `pytest` and `httpx2`
+  (FastAPI's `TestClient` needs an HTTPX-compatible transport) as a dev-only group, excluded
+  from the image via `uv sync --no-dev`.
 - `app/main.py` - creates the `FastAPI` app, loads `.env` from the project root (via
   `python-dotenv`, harmless no-op if the file is absent - Docker gets its env vars from
   `compose.yaml`'s `env_file` instead), adds `SessionMiddleware` keyed by `SESSION_SECRET`,
@@ -34,8 +34,8 @@ FastAPI app, managed with uv. Serves the API under `/api` and the static fronten
   order-sensitive), every `cardIds` entry must exist in `cards`, no card in more than one
   column, no card left out of every column. A board failing any of these is rejected by
   FastAPI's normal request-validation 422 before the route body even runs, since `BoardData`
-  is the declared request/response type. Also holds `INITIAL_BOARD` (the seed data, a
-  straight port of `frontend/src/lib/kanban.ts`'s `initialData`) and `load_board`/
+  is the declared request/response type. Also holds `INITIAL_BOARD` (the seed data - the
+  frontend no longer ships its own demo data, this is the only copy) and `load_board`/
   `save_board`.
 - `app/board_routes.py` - `GET`/`PUT /api/board`, both behind `require_user` and scoped to
   `current_user.id`.
@@ -61,6 +61,14 @@ FastAPI app, managed with uv. Serves the API under `/api` and the static fronten
 - `static/` - currently a placeholder page for that standalone case. The Docker image
   always overwrites this directory with the Next.js static export at build time (see the
   root `Dockerfile`).
+- `app/ai.py` - `ask(messages)` calls the OpenAI API (`openai` Python SDK, currently
+  v3.x - its top-level API differs a fair amount from the v1.x line most docs/training data
+  describe; check the installed version's actual signatures before assuming an example is
+  current) via `client.chat.completions.create`. `get_client()` reads `OPENAI_API_KEY` from
+  the environment and raises a clear `RuntimeError` if it's missing - deliberately not done
+  at import time, so importing this module (which every test run does transitively) never
+  fails just because a key isn't configured. `get_model()` reads `OPENAI_MODEL`, defaulting
+  to `gpt-5.6-luna` (confirmed working via the live test below).
 - `tests/` - pytest, run with `uv run pytest`. `conftest.py`'s `db_path` fixture points
   `DATABASE_PATH` at a fresh `tmp_path` file per test (via `monkeypatch`); its `client`
   fixture builds on that to give each test an isolated, freshly-seeded database - no test
