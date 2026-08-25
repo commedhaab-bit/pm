@@ -259,27 +259,54 @@ threadpool concurrency):
 
 **Goal** - the board is genuinely persistent, and cards can be edited.
 
-- [ ] `KanbanBoard` loads its state from `GET /api/board` instead of `initialData`, with
+- [x] `KanbanBoard` loads its state from `GET /api/board` instead of `initialData`, with
       loading and error states
-- [ ] Every mutation (move, rename, add, delete, edit) updates local state optimistically
+- [x] Every mutation (move, rename, add, delete, edit) updates local state optimistically
       then PUTs the board; on failure, revert and surface the error
-- [ ] Debounce the column rename PUT so typing does not fire a request per keystroke
-- [ ] Add card editing: an inline title and details editor with save and cancel. The whole
+- [x] Debounce the column rename PUT so typing does not fire a request per keystroke
+- [x] Add card editing: an inline title and details editor with save and cancel. The whole
       card is currently the drag handle, so introduce an explicit edit affordance rather
       than a click handler that fights the drag sensor
-- [ ] `initialData` moves to the backend seed; the frontend no longer ships demo data
+- [x] `initialData` moves to the backend seed; the frontend no longer ships demo data
 
 **Tests**
-- vitest with a mocked fetch: initial load renders the fetched board; each mutation issues a
-  PUT with the expected payload; a failed PUT reverts the UI and shows an error; rename
-  debouncing collapses rapid keystrokes into one request
-- pytest: unchanged, plus a round trip asserting the payload shape the frontend sends
-  validates server side
-- Playwright against the container: move a card, rename a column, add, edit and delete a
-  card, reload the page, and confirm every change survived; restart the container and
-  confirm they still survive
+- vitest with a mocked fetch (`KanbanBoard.test.tsx`, 6 tests): initial load renders the
+  fetched board; add/edit issue a PUT with the expected payload; rename debouncing
+  collapses rapid keystrokes into one request; a failed PUT reverts the UI and shows an
+  error
+- pytest: unchanged from Part 6 (18 tests) - `test_put_board_persists_and_get_reflects_it`
+  already round-trips the exact frontend-shaped payload (camelCase `cardIds`, etc.), since
+  `BoardData` is the declared type on both `GET` and `PUT`; no new test needed
+- Playwright against the container: `kanban.spec.ts` covers rename/add/edit/move each in
+  isolation; `persistence.spec.ts` does all of rename, add, edit, move, and delete in one
+  flow, reloads the page, and asserts every one of them survived. A real container restart
+  (not a Playwright test - same manual approach as Part 6) confirmed a mutation survives
+  that too.
 
-**Success criteria** - no board state is lost across a page reload or a container restart.
+**Success criteria** - no board state is lost across a page reload or a container restart -
+confirmed both ways above.
+
+**Found and fixed during this part** (all only visible by running the e2e suite repeatedly,
+not on a single run - see `frontend/AGENTS.md` for the full detail on each):
+- Starlette's `StaticFiles(html=True)` bug from Part 4 wasn't touched here, but a new,
+  similarly easy-to-miss ambiguity showed up: a card's whole sortable article is
+  `role="button"`, so `getByRole("button", { name: "Delete X" })` in a test also matches the
+  *article* (its accessible name is computed from its content, which includes the real
+  button's own label as a substring). Fixed by using a plain CSS attribute selector
+  (`button[aria-label="..."]`) for card buttons instead.
+- `hasText` locators stop matching a card once it switches into its inline edit form
+  (the title moves from text content into an `<input value>`, which `hasText` doesn't see) -
+  fixed by resolving the card's stable `data-testid` before entering edit mode.
+- The board is one real, persisted row shared by the single hardcoded user, with no reset
+  endpoint - so `playwright.config.ts` now forces `workers: 1`, and `kanban.spec.ts`'s tests
+  use randomly-suffixed titles and clean up after themselves rather than assuming specific
+  seed content still exists.
+- The big one: every mutating test action needed to explicitly wait for its own
+  `PUT /api/board` (`KanbanBoard`'s `applyAndSave` fires it fire-and-forget) before moving
+  on, or Playwright tearing the page down could abort it mid-flight - silently orphaning
+  data in the real board (assertions against local React state still "pass", since they
+  don't depend on the network round trip). This took several iterations across repeated
+  batches of runs to fully pin down and fix everywhere it applied.
 
 ---
 

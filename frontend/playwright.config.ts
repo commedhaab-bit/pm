@@ -6,6 +6,10 @@ const isLocalDevServer = baseURL.includes("127.0.0.1:3000");
 export default defineConfig({
   testDir: "./tests",
   timeout: 60_000,
+  // The backend has exactly one board, shared by the one hardcoded user. Every
+  // test that touches the board mutates that same real, persisted state, so
+  // tests must not run concurrently against each other.
+  workers: 1,
   expect: {
     timeout: 10_000,
   },

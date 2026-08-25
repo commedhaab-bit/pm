@@ -1,7 +1,7 @@
 # Frontend
 
-Next.js app for the Kanban board. The board itself is still a client-only demo: all board
-state lives in React and nothing is persisted. Sign in is real - it talks to the backend's
+Next.js app for the Kanban board. Both the board and sign in are real: the board loads
+from and saves to the backend's SQLite-backed API, and sign in talks to the backend's
 session-cookie auth.
 
 ## Stack
@@ -23,7 +23,7 @@ session-cookie auth.
   transition's RSC fetch, only to a full navigation); if authenticated, renders
   `KanbanBoard` with a sign-out handler. Renders nothing while the check is pending, and a
   short message (not a redirect) if `getCurrentUser` rejects for a reason other than
-  `UnauthorizedError` - see the `api.ts` note above for why that distinction is there.
+  `UnauthorizedError` - see the `api.ts` note below for why that distinction is there.
 - `src/app/login/page.tsx` (`"use client"`) - login form. Calls `login()` from
   `src/lib/api.ts`; on success, hard-navigates to `/`; on failure, shows an inline error
   and stays put.
@@ -33,20 +33,57 @@ session-cookie auth.
   unauthenticated `/api/me` is an expected, not exceptional, result for the page guard) -
   anything else (a non-401 error response, a network failure) is rethrown rather than
   also folded into `null`. That distinction matters: a transient 500 is not the same fact
-  as "not signed in", and conflating them once caused a real bug (see `page.tsx` below).
+  as "not signed in", and conflating them once caused a real bug (see `page.tsx` above).
+  `KanbanBoard` uses `apiFetch` directly for `GET`/`PUT /api/board`.
 - `src/app/globals.css` - Tailwind import plus the CSS variables for the color scheme
   (`--accent-yellow`, `--primary-blue`, `--secondary-purple`, `--navy-dark`, `--gray-text`,
   and surface/stroke/shadow tokens).
-- `src/lib/kanban.ts` - data model and pure logic.
+- `src/lib/kanban.ts` - data model and pure logic. No longer ships demo data - the seed
+  board lives in `backend/app/board.py`'s `INITIAL_BOARD` instead (see the root
+  `docs/DATABASE.md`).
 - `src/components/` - the board UI.
 - `src/test/setup.ts` - loads `@testing-library/jest-dom`.
-- `tests/kanban.spec.ts`, `tests/auth.spec.ts` - Playwright specs. By default run against
-  the Docker container at `http://localhost:8000` (must already be up, e.g. via
-  `scripts/start.sh`); set `PW_BASE_URL=http://127.0.0.1:3000` to run against a local
-  `next dev` instead, which Playwright will start automatically for that URL.
-  `kanban.spec.ts` logs in via `page.request.post("/api/login", ...)` in a `beforeEach`
-  (shares the browser context's cookie jar with `page`, so no UI login needed) since every
-  route now requires a session.
+- `tests/auth.spec.ts`, `tests/kanban.spec.ts`, `tests/persistence.spec.ts` - Playwright
+  specs. By default run against the Docker container at `http://localhost:8000` (must
+  already be up, e.g. via `scripts/start.sh`); set `PW_BASE_URL=http://127.0.0.1:3000` to
+  run against a local `next dev` instead, which Playwright will start automatically for
+  that URL. Login is via `page.request.post("/api/login", ...)` in a `beforeEach` (shares
+  the browser context's cookie jar with `page`, so no UI login needed).
+  **`playwright.config.ts` forces `workers: 1`**: there is exactly one board, shared by the
+  one hardcoded user, and it is now genuinely persisted - every board-mutating test acts on
+  that same real row, so tests cannot run concurrently against each other without racing.
+  Since state also persists *across* runs (not just within one), `kanban.spec.ts`'s tests
+  are written to be self-contained and self-cleaning: they create their own throwaway
+  card(s) rather than assuming a specific seed card id still exists (an earlier run may
+  have already renamed or deleted it), and they delete what they added. The one exception
+  is the column rename test, which restores the original title afterwards instead, since
+  columns can't be deleted. `persistence.spec.ts` is the one test that actually reloads the
+  page mid-test to prove every mutation kind (rename, add, edit, move, delete) survives it,
+  then cleans up the same way.
+
+  **Every mutating test action must wait for its own `PUT /api/board` before moving on**,
+  via a `waitForBoardSave(page)` helper (`page.waitForResponse` filtered to a PUT on
+  `/api/board`) defined in each spec file. `KanbanBoard`'s `applyAndSave` fires that PUT
+  fire-and-forget (see `KanbanBoard.tsx` below), and Playwright tears the page down the
+  moment a test function returns - an in-flight fetch gets aborted, not awaited. Two
+  distinct failure modes came from this before every mutation had a wait, both discovered
+  only by running the suite repeatedly (a single run rarely caught it - these are races,
+  not deterministic bugs):
+  - A test's *own* later assertion breaks: `persistence.spec.ts` used to reload immediately
+    after its drag, no wait in between; the reload sometimes raced ahead of the drag's PUT
+    and refetched the pre-move board, failing the "card moved" assertion.
+  - A test's cleanup silently never reaches the server, permanently orphaning data in the
+    one real shared board: e.g. `kanban.spec.ts`'s tests assert against local React state
+    (which updates optimistically, before any network round trip), so they'd report a
+    passing "card deleted" even though the delete's PUT got aborted mid-flight - the card
+    would still be sitting in the database for the next run to trip over.
+  - A related trap once the wait exists: register `waitForBoardSave` *before* triggering the
+    action, and don't let it silently catch a *different*, still-in-flight PUT from an
+    earlier unwaited step - `page.waitForResponse`'s predicate only matches "a PUT to
+    `/api/board`", not "the one this exact action caused". Skipping the wait on a delete
+    right before starting one for a rename let the rename's wait resolve on the delete's
+    (unrelated) response instead, so the rename looked saved when it hadn't fired yet.
+  If you add a new mutating e2e action, give it the same treatment.
 - `next.config.ts` - `output: "export"`. The app is built once as static HTML/JS/CSS and
   served by the FastAPI backend; there is no Next.js server at runtime, so no SSR, no
   server components with server-only behaviour, and no Next middleware. One consequence:
@@ -62,43 +99,60 @@ type BoardData = { columns: Column[]; cards: Record<string, Card> };
 ```
 
 Cards are stored once in a `cards` lookup; each column holds an ordered list of card ids.
-Ordering therefore lives entirely in `column.cardIds`.
+Ordering therefore lives entirely in `column.cardIds`. This is the exact shape
+`backend/app/board.py`'s `BoardData` Pydantic model validates and `GET`/`PUT /api/board`
+send and accept - no translation layer between the two.
 
 Exports:
 
-- `initialData` - hardcoded demo board: five columns (Backlog, Discovery, In Progress,
-  Review, Done) and eight cards. This is the seed data the backend will eventually own.
 - `moveCard(columns, activeId, overId)` - pure reducer for drag and drop. Handles reorder
   within a column, move between columns, and drops onto an empty column (`overId` is a
   column id rather than a card id). Returns the input unchanged when the move is a no-op.
-- `createId(prefix)` - id from random suffix plus timestamp, e.g. `card-x1y2z3mfa1b2`.
+- `createId(prefix)` - id from random suffix plus timestamp, e.g. `card-x1y2z3mfa1b2`. Used
+  client-side for new card ids before they're saved.
 
 ## Components
 
-- `KanbanBoard.tsx` (`"use client"`) - the only stateful board component. Holds `BoardData`
-  in `useState`, owns the `DndContext` (PointerSensor with a 6px activation distance,
-  `closestCorners` collision detection) and the handlers: `handleDragStart`/`handleDragEnd`,
-  `handleRenameColumn`, `handleAddCard`, `handleDeleteCard`. Renders the page header and
-  the five column grid. Takes an optional `onSignOut` prop; when present, renders a
-  "Sign out" button in the header.
+- `KanbanBoard.tsx` (`"use client"`) - the stateful board component. `board` is
+  `BoardData | null`; `null` means "still loading" (or a failed initial load, distinguished
+  by an `error` string also being set) and renders a short status message instead of the
+  board. On mount, fetches `GET /api/board`; a 401 there hard-navigates to `/login` (a
+  session can expire while the tab is open), anything else sets the error message.
+  Every mutation follows the same `applyAndSave` pattern: update `board` immediately
+  (optimistic), then `PUT` the new board in the background; on failure, revert to
+  `lastSavedBoard` (a ref tracking the last state the server actually accepted) and show an
+  error banner above the columns. Column rename is the one exception - typing updates the
+  input immediately but the `PUT` is debounced 500ms after the last keystroke
+  (`RENAME_DEBOUNCE_MS`), so a revert-on-failure there rolls back to the last *saved*
+  title, not the last keystroke. Owns the `DndContext` (PointerSensor with a 6px activation
+  distance, `closestCorners` collision detection). Takes an optional `onSignOut` prop; when
+  present, renders a "Sign out" button in the header.
 - `KanbanColumn.tsx` - droppable column. Renders the card count, an always-editable title
   input (calls `onRename` on every keystroke), a `SortableContext` over the column's cards,
-  an empty-state placeholder, and `NewCardForm`.
-- `KanbanCard.tsx` - sortable card. The whole article is the drag handle. Shows title,
-  details, and a Remove button.
+  an empty-state placeholder, and `NewCardForm`. Passes `onEditCard` through to each
+  `KanbanCard`.
+- `KanbanCard.tsx` - sortable card with two render modes. Normally: title, details, an Edit
+  button and a Remove button, with the whole article as the drag handle (dnd-kit's 6px
+  activation distance means a plain click on either button doesn't start a drag - this is
+  also why the inline editor below is safe to put inside the same sortable article).
+  Clicking Edit swaps in an inline title input + details textarea with Save/Cancel; while
+  editing, the article does *not* get `{...attributes} {...listeners}` spread onto it, so
+  dragging is disabled for the duration (avoids fighting text selection in the textarea).
+  Save calls `onEdit(cardId, title, details)` (title required, like `NewCardForm`); Cancel
+  discards the local edit.
 - `KanbanCardPreview.tsx` - presentation-only copy of the card used inside `DragOverlay`.
 - `NewCardForm.tsx` - collapsed "Add a card" button that expands into a title/details form.
   Title is required; blank details become "No details yet." in `KanbanBoard`.
 
 Test hooks: `data-testid="column-{id}"` and `data-testid="card-{id}"`; the column title
-input is found by `aria-label="Column title"`; the delete button by
-`aria-label="Delete {title}"`.
+input is found by `aria-label="Column title"`; a card's buttons by `aria-label="Edit {title}"`
+/ `aria-label="Delete {title}"`; the inline editor's fields by
+`aria-label="Edit title for {title}"` / `aria-label="Edit details for {title}"` (all keyed
+off the card's title *before* editing starts, since that's what's stable while the form is
+open).
 
 ## Not implemented yet
 
-- Editing an existing card (only add, delete, move)
-- Persisting the board - a refresh resets it to `initialData`; sign in/out is the only
-  real API traffic so far
 - The AI chat sidebar
 
 ## Commands
