@@ -1,7 +1,8 @@
 # Frontend
 
-Next.js app for the Kanban board. Currently a client-only demo: all state lives in React,
-nothing is persisted, and there is no backend call yet.
+Next.js app for the Kanban board. The board itself is still a client-only demo: all board
+state lives in React and nothing is persisted. Sign in is real - it talks to the backend's
+session-cookie auth.
 
 ## Stack
 
@@ -16,20 +17,36 @@ nothing is persisted, and there is no backend call yet.
 
 - `src/app/layout.tsx` - root layout. Loads Space Grotesk (`--font-display`) and Manrope
   (`--font-body`) through `next/font/google`, so the build needs network access.
-- `src/app/page.tsx` - renders `KanbanBoard` and nothing else.
+- `src/app/page.tsx` (`"use client"`) - the auth guard for `/`. On mount, calls
+  `GET /api/me`; if unauthenticated, hard-navigates to `/login` (`window.location.href`,
+  not the Next router - there is no server to render a fresh `/login` response to a client
+  transition's RSC fetch, only to a full navigation); if authenticated, renders
+  `KanbanBoard` with a sign-out handler. Renders nothing while the check is pending.
+- `src/app/login/page.tsx` (`"use client"`) - login form. Calls `login()` from
+  `src/lib/api.ts`; on success, hard-navigates to `/`; on failure, shows an inline error
+  and stays put.
+- `src/lib/api.ts` - `apiFetch` wraps `fetch` with `credentials: "include"` and throws
+  `UnauthorizedError` on a 401. `login`/`logout`/`getCurrentUser` wrap the three auth
+  routes; `getCurrentUser` swallows the 401 and returns `null` rather than throwing, since
+  an unauthenticated `/api/me` is an expected, not exceptional, result for the page guard.
 - `src/app/globals.css` - Tailwind import plus the CSS variables for the color scheme
   (`--accent-yellow`, `--primary-blue`, `--secondary-purple`, `--navy-dark`, `--gray-text`,
   and surface/stroke/shadow tokens).
 - `src/lib/kanban.ts` - data model and pure logic.
 - `src/components/` - the board UI.
 - `src/test/setup.ts` - loads `@testing-library/jest-dom`.
-- `tests/kanban.spec.ts` - Playwright specs. By default run against the Docker container
-  at `http://localhost:8000` (must already be up, e.g. via `scripts/start.sh`); set
-  `PW_BASE_URL=http://127.0.0.1:3000` to run against a local `next dev` instead, which
-  Playwright will start automatically for that URL.
+- `tests/kanban.spec.ts`, `tests/auth.spec.ts` - Playwright specs. By default run against
+  the Docker container at `http://localhost:8000` (must already be up, e.g. via
+  `scripts/start.sh`); set `PW_BASE_URL=http://127.0.0.1:3000` to run against a local
+  `next dev` instead, which Playwright will start automatically for that URL.
+  `kanban.spec.ts` logs in via `page.request.post("/api/login", ...)` in a `beforeEach`
+  (shares the browser context's cookie jar with `page`, so no UI login needed) since every
+  route now requires a session.
 - `next.config.ts` - `output: "export"`. The app is built once as static HTML/JS/CSS and
   served by the FastAPI backend; there is no Next.js server at runtime, so no SSR, no
-  server components with server-only behaviour, and no Next middleware.
+  server components with server-only behaviour, and no Next middleware. One consequence:
+  the backend cannot gate `/` server-side, so an unauthenticated request for `/` still gets
+  200 and the same static shell - the redirect to `/login` happens client-side, after load.
 
 ## Data model (`src/lib/kanban.ts`)
 
@@ -53,11 +70,12 @@ Exports:
 
 ## Components
 
-- `KanbanBoard.tsx` (`"use client"`) - the only stateful component. Holds `BoardData` in
-  `useState`, owns the `DndContext` (PointerSensor with a 6px activation distance,
+- `KanbanBoard.tsx` (`"use client"`) - the only stateful board component. Holds `BoardData`
+  in `useState`, owns the `DndContext` (PointerSensor with a 6px activation distance,
   `closestCorners` collision detection) and the handlers: `handleDragStart`/`handleDragEnd`,
   `handleRenameColumn`, `handleAddCard`, `handleDeleteCard`. Renders the page header and
-  the five column grid.
+  the five column grid. Takes an optional `onSignOut` prop; when present, renders a
+  "Sign out" button in the header.
 - `KanbanColumn.tsx` - droppable column. Renders the card count, an always-editable title
   input (calls `onRename` on every keystroke), a `SortableContext` over the column's cards,
   an empty-state placeholder, and `NewCardForm`.
@@ -74,8 +92,8 @@ input is found by `aria-label="Column title"`; the delete button by
 ## Not implemented yet
 
 - Editing an existing card (only add, delete, move)
-- Any persistence or API call - a refresh resets the board to `initialData`
-- Sign in and sign out
+- Persisting the board - a refresh resets it to `initialData`; sign in/out is the only
+  real API traffic so far
 - The AI chat sidebar
 
 ## Commands

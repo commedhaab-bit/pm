@@ -137,31 +137,49 @@ container. State still resets on refresh - persistence is Part 7.
 
 **Goal** - the board is behind a login; credentials are hardcoded to `user` / `password`.
 
-- [ ] `SessionMiddleware` with a secret from the environment, generated and written to
-      `.env` by the start scripts if absent
-- [ ] `POST /api/login`, `POST /api/logout`, `GET /api/me`
-- [ ] Credentials checked against the hardcoded pair for now; the check lives in one
-      function so Part 6 can swap it for the database lookup
-- [ ] Dependency `require_user` returning 401 for unauthenticated `/api` requests
-- [ ] `frontend/src/app/login/page.tsx` - login form in the project color scheme, showing an
+- [x] `SessionMiddleware` with a secret from the environment, generated and written to
+      `.env` by the start scripts if absent (falls back to a fixed insecure dev value so
+      plain `pytest` never needs `.env`)
+- [x] `POST /api/login`, `POST /api/logout`, `GET /api/me`
+- [x] Credentials checked against the hardcoded pair for now; the check lives in one
+      function (`check_credentials`) so Part 6 can swap it for the database lookup
+- [x] Dependency `require_user` returning 401 for unauthenticated `/api` requests
+- [x] `frontend/src/app/login/page.tsx` - login form in the project color scheme, showing an
       error on bad credentials
-- [ ] `frontend/src/lib/api.ts` - fetch wrapper with `credentials: "include"` that redirects
-      to `/login` on a 401
-- [ ] Client-side guard: `/` checks `GET /api/me` on mount and redirects to `/login` when
+- [x] `frontend/src/lib/api.ts` - fetch wrapper with `credentials: "include"`;
+      `getCurrentUser` (used by the page guard) swallows a 401 and returns `null` rather
+      than redirecting itself, since the login page also uses `apiFetch` and a blanket
+      redirect-on-401 there would fight the "show an error, stay put" behavior on bad
+      credentials. The `/` page guard is what actually redirects to `/login`.
+- [x] Client-side guard: `/` checks `GET /api/me` on mount and redirects to `/login` when
       unauthenticated
-- [ ] Sign out control in the board header
+- [x] Sign out control in the board header
+- [x] Custom static handler replacing the plain `StaticFiles(html=True)` mount from Part 2/3
+      - it does not resolve a bare route like `/login` to Next's exported `login.html`,
+      only to directory-style `index.html`. See `backend/app/static.py`.
 
 **Tests**
-- pytest: login with correct credentials sets the cookie; wrong username, wrong password and
-  missing fields each return 401; `/api/me` returns 401 without the cookie and the user with
-  it; logout clears the session so `/api/me` is 401 again
-- vitest: login form submits, renders the error state, redirects on success
-- Playwright: hitting `/` unauthenticated lands on `/login`; bad credentials show an error;
-  good credentials reach the board; sign out returns to `/login`; the back button does not
-  restore the board
+- pytest (6 tests): login with correct credentials sets the cookie; wrong username, wrong
+  password and missing fields (422) each rejected; `/api/me` returns 401 without the cookie
+  and the user with it; logout clears the session so `/api/me` is 401 again
+- vitest (2 tests, `login/page.test.tsx`): failed login shows the error and does not
+  navigate; successful login navigates to `/`
+- Playwright (`auth.spec.ts`, 3 tests, plus the existing `kanban.spec.ts` now logging in via
+  `page.request.post` in a `beforeEach`): hitting `/` unauthenticated redirects to `/login`;
+  bad credentials show an error and stay on `/login`; good credentials reach the board,
+  sign out returns to `/login`, and the back button does not restore the board (the guard
+  re-checks `/api/me` on every load of `/`, so back navigation re-redirects)
 
-**Success criteria** - no route exposes board content without a valid session cookie,
-verified by a direct `curl` to `/api/board` with no cookie.
+**Success criteria** - no route exposes board content without a valid session cookie -
+verified directly: `curl /api/me` with no cookie is 401. (`/api/board` doesn't exist until
+Part 6; `/` itself is a static shell that always 200s, since gating happens client-side -
+documented in `frontend/AGENTS.md`.)
+
+**Found and fixed during this part**: the start scripts' original `SESSION_SECRET`
+generation used `echo ... >> .env`, which silently concatenated onto `OPENAI_API_KEY`'s
+value with no newline in between (the existing `.env` didn't end in one), corrupting both
+variables. Fixed by always emitting a leading newline before the appended line in both
+`start.sh` and `start.ps1`; `.env` was repaired and verified by exact line length.
 
 ---
 
