@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PM Backend</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #032147;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    #status {
+      font-size: 1.25rem;
+      padding: 1rem 2rem;
+      border-radius: 0.75rem;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .ok { color: #ecad0a; }
+    .error { color: #e5484d; }
+  </style>
+</head>
+<body>
+  <div id="status">Checking API...</div>
+  <script>
+    fetch("/api/health")
+      .then((res) => res.json())
+      .then((data) => {
+        const el = document.getElementById("status");
+        el.textContent = "API status: " + data.status;
+        el.classList.add(data.status === "ok" ? "ok" : "error");
+      })
+      .catch((err) => {
+        const el = document.getElementById("status");
+        el.textContent = "API unreachable: " + err;
+        el.classList.add("error");
+      });
+  </script>
+</body>
+</html>

@@ -5,9 +5,10 @@ import { KanbanBoard } from "@/components/KanbanBoard";
 const getFirstColumn = () => screen.getAllByTestId(/column-/i)[0];
 
 describe("KanbanBoard", () => {
-  it("renders five columns", () => {
+  it("renders five columns and eight cards", () => {
     render(<KanbanBoard />);
     expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
+    expect(screen.getAllByTestId(/^card-/i)).toHaveLength(8);
   });
 
   it("renames a column", async () => {
@@ -42,5 +43,33 @@ describe("KanbanBoard", () => {
     await userEvent.click(deleteButton);
 
     expect(within(column).queryByText("New card")).not.toBeInTheDocument();
+  });
+
+  it("adds a card to the column it was created in, not any other", async () => {
+    render(<KanbanBoard />);
+    const columns = screen.getAllByTestId(/column-/i);
+    const secondColumn = columns[1];
+
+    await userEvent.click(
+      within(secondColumn).getByRole("button", { name: /add a card/i })
+    );
+    await userEvent.type(
+      within(secondColumn).getByPlaceholderText(/card title/i),
+      "Second column card"
+    );
+    await userEvent.click(
+      within(secondColumn).getByRole("button", { name: /add card/i })
+    );
+
+    expect(
+      within(secondColumn).getByText("Second column card")
+    ).toBeInTheDocument();
+    columns
+      .filter((column) => column !== secondColumn)
+      .forEach((column) => {
+        expect(
+          within(column).queryByText("Second column card")
+        ).not.toBeInTheDocument();
+      });
   });
 });

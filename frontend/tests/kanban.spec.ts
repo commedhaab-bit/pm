@@ -6,7 +6,15 @@ test("loads the kanban board", async ({ page }) => {
   await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
 });
 
-test("adds a card to a column", async ({ page }) => {
+test("renames a column", async ({ page }) => {
+  await page.goto("/");
+  const firstColumn = page.locator('[data-testid^="column-"]').first();
+  const titleInput = firstColumn.getByLabel("Column title");
+  await titleInput.fill("Renamed Column");
+  await expect(titleInput).toHaveValue("Renamed Column");
+});
+
+test("adds and deletes a card", async ({ page }) => {
   await page.goto("/");
   const firstColumn = page.locator('[data-testid^="column-"]').first();
   await firstColumn.getByRole("button", { name: /add a card/i }).click();
@@ -14,6 +22,11 @@ test("adds a card to a column", async ({ page }) => {
   await firstColumn.getByPlaceholder("Details").fill("Added via e2e.");
   await firstColumn.getByRole("button", { name: /add card/i }).click();
   await expect(firstColumn.getByText("Playwright card")).toBeVisible();
+
+  await firstColumn
+    .locator('button[aria-label="Delete Playwright card"]')
+    .click();
+  await expect(firstColumn.getByText("Playwright card")).not.toBeVisible();
 });
 
 test("moves a card between columns", async ({ page }) => {

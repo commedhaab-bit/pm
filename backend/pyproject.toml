@@ -1,0 +1,19 @@
+[project]
+name = "pm-backend"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.119",
+    "uvicorn[standard]>=0.38",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.12.0",
+    "pytest>=8.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: hits a real external service, deselected by default"]
+addopts = "-m 'not live'"
