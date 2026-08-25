@@ -51,6 +51,15 @@ class ChatResponse(BaseModel):
     board: BoardData | None = None
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatMessage]
+
+
 def _ai_board_to_board_data(ai_board: AIBoardData) -> BoardData:
     card_ids = [card.id for card in ai_board.cards]
     if len(card_ids) != len(set(card_ids)):
@@ -101,6 +110,14 @@ def save_history(
         (user_id, json.dumps(messages), now),
     )
     conn.commit()
+
+
+@router.get("/chat")
+def get_chat_history(
+    current_user: CurrentUser = Depends(require_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> ChatHistoryResponse:
+    return ChatHistoryResponse(messages=load_history(conn, current_user.id))
 
 
 @router.post("/chat")

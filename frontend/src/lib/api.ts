@@ -1,3 +1,5 @@
+import type { BoardData } from "@/lib/kanban";
+
 export class UnauthorizedError extends Error {
   constructor() {
     super("Not authenticated");
@@ -48,4 +50,34 @@ export const getCurrentUser = async (): Promise<{ username: string } | null> => 
     }
     throw error;
   }
+};
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type ChatResult = {
+  reply: string;
+  board: BoardData | null;
+};
+
+export const getChatHistory = async (): Promise<ChatMessage[]> => {
+  const response = await apiFetch("/api/chat");
+  if (!response.ok) {
+    throw new Error(`Failed to load chat history: ${response.status}`);
+  }
+  const data = await response.json();
+  return data.messages;
+};
+
+export const sendChatMessage = async (message: string): Promise<ChatResult> => {
+  const response = await apiFetch("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to send message: ${response.status}`);
+  }
+  return await response.json();
 };

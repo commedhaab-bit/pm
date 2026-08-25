@@ -37,5 +37,6 @@ Frontend (from `frontend/`):
 
 ```
 npm run test:unit
-npm run test:e2e
+npm run test:e2e       # excludes tests that call the real OpenAI API
+npm run test:e2e:live  # only the tests that call the real OpenAI API
 ```

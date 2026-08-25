@@ -21,6 +21,25 @@ def test_chat_requires_auth(client):
     assert response.status_code == 401
 
 
+def test_get_chat_history_requires_auth(client):
+    response = client.get("/api/chat")
+    assert response.status_code == 401
+
+
+def test_get_chat_history_empty_then_populated(client, monkeypatch):
+    login(client)
+    assert client.get("/api/chat").json() == {"messages": []}
+
+    mock_ask_structured(monkeypatch, ChatReply(reply="Hello!", board=None))
+    client.post("/api/chat", json={"message": "hi"})
+
+    history = client.get("/api/chat").json()["messages"]
+    assert history == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "Hello!"},
+    ]
+
+
 def test_chat_reply_without_board_leaves_board_unchanged(client, monkeypatch):
     login(client)
     original_board = client.get("/api/board").json()

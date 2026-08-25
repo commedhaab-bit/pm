@@ -73,7 +73,9 @@ FastAPI app, managed with uv. Serves the API under `/api` and the static fronten
   from the v1.x line most existing docs/training data describes - its top-level client shape
   differs enough that its actual installed API (`dir(...)`, `inspect.signature(...)`) is
   worth checking directly before assuming an example is still current.
-- `app/chat.py` - `POST /api/chat`. Builds a system prompt from the rules (the five fixed
+- `app/chat.py` - `GET`/`POST /api/chat`. `GET` returns the stored conversation
+  (`{messages: [...]}`) so the frontend can render it on load without losing it on a
+  reload. `POST` builds a system prompt from the rules (the five fixed
   column ids, "only titles change", "every card in exactly one column") plus the live
   current board (re-read from `boards` on every call, not cached, since a direct UI edit
   since the last chat turn must be reflected), appends the stored conversation history plus
@@ -121,6 +123,8 @@ automatically on first use; deleting the file and restarting recreates it.
 - `GET /api/board` - the signed-in user's board, 401 without a session.
 - `PUT /api/board` - replaces the signed-in user's board; 422 if it fails the
   `BoardData` invariants, 401 without a session.
+- `GET /api/chat` - `{messages: [...]}`, the signed-in user's stored conversation (`[]` if
+  none yet). 401 without a session.
 - `POST /api/chat` - `{message}` -> `{reply, board?}`. `board` is present only when the AI
   proposed (and it passed validation as) a change; otherwise `null` and the stored board is
   untouched. 401 without a session.

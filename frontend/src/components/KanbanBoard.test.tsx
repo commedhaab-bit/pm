@@ -35,10 +35,12 @@ describe("KanbanBoard", () => {
   let board: BoardData;
   let fetchMock: ReturnType<typeof vi.fn>;
   let putShouldFail: boolean;
+  let nextChatResult: { reply: string; board: BoardData | null };
 
   beforeEach(() => {
     board = makeBoard();
     putShouldFail = false;
+    nextChatResult = { reply: "OK", board: null };
     fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       const method = init?.method ?? "GET";
@@ -50,6 +52,12 @@ describe("KanbanBoard", () => {
           return Promise.resolve(mockResponse(null, false));
         }
         return Promise.resolve(mockResponse(JSON.parse(init!.body as string)));
+      }
+      if (url === "/api/chat" && method === "GET") {
+        return Promise.resolve(mockResponse({ messages: [] }));
+      }
+      if (url === "/api/chat" && method === "POST") {
+        return Promise.resolve(mockResponse(nextChatResult));
       }
       return Promise.reject(new Error(`Unhandled fetch: ${method} ${url}`));
     });
@@ -136,5 +144,39 @@ describe("KanbanBoard", () => {
       /could not save your change/i
     );
     expect(within(column).getByText("Card 1")).toBeInTheDocument();
+  });
+
+  it("applies a board update from the AI assistant without a manual reload", async () => {
+    await renderBoard();
+    await userEvent.click(screen.getByRole("button", { name: /ai assistant/i }));
+
+    const updatedBoard: BoardData = {
+      ...board,
+      columns: board.columns.map((column) => {
+        if (column.id === "col-backlog") {
+          return { ...column, cardIds: column.cardIds.filter((id) => id !== "card-1") };
+        }
+        if (column.id === "col-done") {
+          return { ...column, cardIds: [...column.cardIds, "card-1"] };
+        }
+        return column;
+      }),
+      cards: board.cards,
+    };
+    nextChatResult = { reply: "Moved it to Done.", board: updatedBoard };
+
+    await userEvent.type(screen.getByLabelText("Message"), "Move card 1 to done");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+    expect(await screen.findByText("Moved it to Done.")).toBeInTheDocument();
+
+    const doneColumn = screen.getByTestId("column-col-done");
+    const backlogColumn = screen.getByTestId("column-col-backlog");
+    expect(within(doneColumn).getByText("Card 1")).toBeInTheDocument();
+    expect(within(backlogColumn).queryByText("Card 1")).not.toBeInTheDocument();
+
+    // The board came already-persisted from the chat endpoint - applying it
+    // client-side must not trigger a redundant PUT.
+    expect(putCalls(fetchMock)).toHaveLength(0);
   });
 });
