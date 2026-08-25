@@ -1,21 +1,46 @@
+import hashlib
+import sqlite3
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-HARDCODED_USERNAME = "user"
-HARDCODED_PASSWORD = "password"
+from app.db import get_db
 
 router = APIRouter(prefix="/api")
 
 
-def check_credentials(username: str, password: str) -> bool:
-    return username == HARDCODED_USERNAME and password == HARDCODED_PASSWORD
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
-def require_user(request: Request) -> str:
+def check_credentials(conn: sqlite3.Connection, username: str, password: str) -> bool:
+    row = conn.execute(
+        "SELECT password_hash FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    if row is None:
+        return False
+    return row["password_hash"] == hash_password(password)
+
+
+class CurrentUser(BaseModel):
+    id: int
+    username: str
+
+
+def require_user(
+    request: Request, conn: sqlite3.Connection = Depends(get_db)
+) -> CurrentUser:
     username = request.session.get("username")
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return username
+
+    row = conn.execute(
+        "SELECT id, username FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return CurrentUser(id=row["id"], username=row["username"])
 
 
 class LoginRequest(BaseModel):
@@ -24,8 +49,10 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(payload: LoginRequest, request: Request) -> dict[str, str]:
-    if not check_credentials(payload.username, payload.password):
+def login(
+    payload: LoginRequest, request: Request, conn: sqlite3.Connection = Depends(get_db)
+) -> dict[str, str]:
+    if not check_credentials(conn, payload.username, payload.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     request.session["username"] = payload.username
     return {"username": payload.username}
@@ -38,5 +65,5 @@ def logout(request: Request) -> dict[str, str]:
 
 
 @router.get("/me")
-def me(username: str = Depends(require_user)) -> dict[str, str]:
-    return {"username": username}
+def me(current_user: CurrentUser = Depends(require_user)) -> dict[str, str]:
+    return {"username": current_user.username}

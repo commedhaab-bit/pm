@@ -21,14 +21,19 @@ session-cookie auth.
   `GET /api/me`; if unauthenticated, hard-navigates to `/login` (`window.location.href`,
   not the Next router - there is no server to render a fresh `/login` response to a client
   transition's RSC fetch, only to a full navigation); if authenticated, renders
-  `KanbanBoard` with a sign-out handler. Renders nothing while the check is pending.
+  `KanbanBoard` with a sign-out handler. Renders nothing while the check is pending, and a
+  short message (not a redirect) if `getCurrentUser` rejects for a reason other than
+  `UnauthorizedError` - see the `api.ts` note above for why that distinction is there.
 - `src/app/login/page.tsx` (`"use client"`) - login form. Calls `login()` from
   `src/lib/api.ts`; on success, hard-navigates to `/`; on failure, shows an inline error
   and stays put.
 - `src/lib/api.ts` - `apiFetch` wraps `fetch` with `credentials: "include"` and throws
   `UnauthorizedError` on a 401. `login`/`logout`/`getCurrentUser` wrap the three auth
-  routes; `getCurrentUser` swallows the 401 and returns `null` rather than throwing, since
-  an unauthenticated `/api/me` is an expected, not exceptional, result for the page guard.
+  routes; `getCurrentUser` catches only `UnauthorizedError` and returns `null` for it (an
+  unauthenticated `/api/me` is an expected, not exceptional, result for the page guard) -
+  anything else (a non-401 error response, a network failure) is rethrown rather than
+  also folded into `null`. That distinction matters: a transient 500 is not the same fact
+  as "not signed in", and conflating them once caused a real bug (see `page.tsx` below).
 - `src/app/globals.css` - Tailwind import plus the CSS variables for the color scheme
   (`--accent-yellow`, `--primary-blue`, `--secondary-purple`, `--navy-dark`, `--gray-text`,
   and surface/stroke/shadow tokens).

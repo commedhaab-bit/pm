@@ -187,18 +187,18 @@ variables. Fixed by always emitting a leading newline before the appended line i
 
 **Goal** - an agreed schema, documented and signed off before any code depends on it.
 
-- [ ] Write `docs/DATABASE.md`: tables, the JSON board document, why the blob approach fits
+- [x] Write `docs/DATABASE.md`: tables, the JSON board document, why the blob approach fits
       the MVP, and what a future normalized schema would change
-- [ ] Schema:
+- [x] Schema:
       `users(id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL)`
       and
       `boards(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE REFERENCES users(id), data TEXT NOT NULL, updated_at TEXT NOT NULL)`
-- [ ] `boards.data` holds the exact `BoardData` shape the frontend already uses
+- [x] `boards.data` holds the exact `BoardData` shape the frontend already uses
       (`{columns: [{id, title, cardIds}], cards: {id: {id, title, details}}}`), so board JSON
       is identical in the database, over the API and in the AI prompt
-- [ ] Document seeding: on first run, create the `user` account and one board from the
+- [x] Document seeding: on first run, create the `user` account and one board from the
       current `initialData`
-- [ ] Document the invariants the backend enforces: exactly five columns with stable ids,
+- [x] Document the invariants the backend enforces: exactly five columns with stable ids,
       every id in a `cardIds` list exists in `cards`, no card in two columns, no orphans
 - [ ] User signs off on `docs/DATABASE.md`
 
@@ -211,16 +211,16 @@ that approval.
 
 **Goal** - the API reads and writes the board, backed by SQLite that creates itself.
 
-- [ ] `backend/app/db.py` - connection helper, `CREATE TABLE IF NOT EXISTS` at startup,
+- [x] `backend/app/db.py` - connection helper, `CREATE TABLE IF NOT EXISTS` at startup,
       database path from an env var defaulting to `/data/pm.db`, parent directory created
-- [ ] Seed the `user` account and its board on startup when the users table is empty
-- [ ] `backend/app/board.py` - load, validate and save the board document
-- [ ] Validation with Pydantic models mirroring `BoardData`, enforcing the Part 5 invariants
-- [ ] `GET /api/board` and `PUT /api/board`, both scoped to the session user
-- [ ] Point the Part 4 credential check at the users table
-- [ ] Tests use a temporary database file per test, never the real one
+- [x] Seed the `user` account and its board on startup when the users table is empty
+- [x] `backend/app/board.py` - load, validate and save the board document
+- [x] Validation with Pydantic models mirroring `BoardData`, enforcing the Part 5 invariants
+- [x] `GET /api/board` and `PUT /api/board`, both scoped to the session user
+- [x] Point the Part 4 credential check at the users table
+- [x] Tests use a temporary database file per test, never the real one
 
-**Tests** - pytest:
+**Tests** - pytest (18 tests):
 - the database file and tables are created when the file is absent
 - startup is idempotent: running it twice does not duplicate the seed user or board
 - `GET /api/board` returns the seeded board for the signed in user
@@ -228,10 +228,30 @@ that approval.
 - invalid boards are rejected with 422: wrong column count, unknown card id in `cardIds`,
   duplicate card across columns, orphaned card, renamed column id
 - both routes return 401 without a session
-- two users see only their own board
+- two users see only their own board (a second user/board inserted directly since there's
+  no signup route; also confirms `check_credentials` is genuinely DB-driven, not still
+  hardcoded to the one username)
 
-**Success criteria** - pytest green with every route covered; deleting the database file and
-restarting recreates it with the seed data.
+**Success criteria** - pytest green (18/18) with every route covered; deleting the database
+file inside the container and restarting recreates it with the seed data - verified for
+real against the built container (renamed a column via `PUT`, restarted, change survived;
+deleted `/data/pm.db`, restarted, board was back to the fresh seed).
+
+**Found and fixed during this part** (both via repeated real Playwright runs against the
+built container, not caught by pytest - `TestClient` doesn't reproduce FastAPI's
+threadpool concurrency):
+- `db.connect()` opened SQLite connections without `check_same_thread=False`. FastAPI runs
+  sync dependencies and route handlers through a thread pool, so a single request's
+  `get_db()` setup and its handler body are not guaranteed to run on the same thread -
+  under concurrent load this raised `sqlite3.ProgrammingError`, intermittently and only
+  under 2+ parallel workers (reproduced 3/3 times before the fix, 0/5 after).
+- That 500 was silently swallowed as "not authenticated" by the frontend's
+  `getCurrentUser()`, which treated any non-401 failure the same as a 401 - so the visible
+  symptom was a wrong redirect to `/login`, not a visible error. Fixed by only treating a
+  confirmed `UnauthorizedError` as "signed out" and rethrowing anything else; `page.tsx`
+  now shows a short message instead of redirecting when that happens.
+- Also stopped re-running `init_db`/`seed_if_empty` on every single request (they were
+  idempotent but pointlessly repeated); now cached per resolved path in `_ready_paths`.
 
 ---
 

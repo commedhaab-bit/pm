@@ -39,10 +39,13 @@ export const getCurrentUser = async (): Promise<{ username: string } | null> => 
   try {
     const response = await apiFetch("/api/me");
     if (!response.ok) {
-      return null;
+      throw new Error(`Unexpected response from /api/me: ${response.status}`);
     }
     return await response.json();
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      return null;
+    }
+    throw error;
   }
 };
